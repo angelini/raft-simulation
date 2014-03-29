@@ -1,10 +1,14 @@
 (ns raft.client
   (:require [com.stuartsierra.component :as component]
             [clojure.core.async :as async]
-            [clj-http.client :as http]))
+            [clj-http.client :as http]
+            [clj-json.core :as json]))
 
 (defn url [host port-base action id]
   (str host ":" (+ port-base id) "/" action))
+
+(defn format-response [response]
+  (:body response))
 
 (defrecord Client [host port-base resp-chan]
   component/Lifecycle
@@ -32,5 +36,9 @@
 (defn rpc [client id action body]
   (let [{:keys [host port-base resp-chan]} client]
     (async/go
-      (async/>! resp-chan (http/get (url host port-base action id)
-                                    {:query-params body})))))
+      (let [url (url host port-base action id)
+            params {:body (json/generate-string body)
+                    :content-type :json}
+            resp (try (http/post url params) (catch Exception e nil))]
+        (if resp
+          (async/>! resp-chan (format-response resp)))))))

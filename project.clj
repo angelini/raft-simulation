@@ -4,8 +4,10 @@
   :license {:name "MIT License"
             :url "http://opensource.org/licenses/MIT"}
   :dependencies [[org.clojure/clojure "1.6.0"]
+                 [org.clojure/math.numeric-tower "0.0.4"]
                  [com.stuartsierra/component "0.2.1"]
                  [clj-http "0.9.1"]
+                 [clj-json "0.5.3"]
                  [ring/ring-core "1.2.2"]
                  [ring/ring-json "0.3.0"]
                  [ring/ring-jetty-adapter "1.2.2"]

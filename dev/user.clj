@@ -1,7 +1,10 @@
 (ns user
   (:require [com.stuartsierra.component :as component]
             [clojure.tools.namespace.repl :refer (refresh)]
-            [raft.core :refer :all]))
+            [clojure.core.async :as async]
+            [clj-http.client :as http]
+            [raft.core :refer :all]
+            [raft.server :refer :all]))
 
 (def system nil)
 
