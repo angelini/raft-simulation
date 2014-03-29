@@ -4,7 +4,9 @@
             [clojure.core.async :as async]
             [clj-http.client :as http]
             [raft.core :refer :all]
-            [raft.server :refer :all]))
+            [raft.server :refer :all]
+            [raft.client :refer :all]
+            [raft.log :refer :all]))
 
 (def system nil)
 
