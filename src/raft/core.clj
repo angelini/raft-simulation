@@ -46,6 +46,7 @@
   (doseq [id cluster]
     (rpc client id "append-entries" {:term (:current-term node)
                                      :leader-id (:id node)
+                                     :leader-commit 0
                                      :prev-log-index 0
                                      :prev-log-term nil
                                      :entries []})))
@@ -53,7 +54,7 @@
 (defn follower->candidate [node]
   (assoc node :state :candidate
               :voted-for (:id node)
-              :votes [(:id node)]
+              :votes #{(:id node)}
               :current-term (inc (:current-term node))))
 
 (defn candidate->follower [node]
@@ -64,7 +65,8 @@
 (defn candidate->leader [node]
   (assoc node :state :leader
               :voted-for nil
-              :votes #{}))
+              :votes #{}
+              :leader (:id node)))
 
 (defn leader->follower [node]
   (assoc node :state :follower))
@@ -81,7 +83,7 @@
           (assoc node :voted-for candidate-id)))))
 
 (defn append-entries-handler [server log message node]
-  (let [{:keys [term leader entries leader-commit
+  (let [{:keys [term leader-id entries leader-commit
                 prev-log-index prev-log-term]} message
         {:keys [current-term id]} node
         response {:term current-term :id id :type :append-response}]
@@ -91,7 +93,9 @@
           node)
       (do (respond server (assoc response :success true))
           (append-entries log entries leader-commit)
-          (assoc node :leader leader)))))
+          (assoc node :leader leader-id
+                      :current-term term
+                      :voted-for nil)))))
 
 (defn vote-response-handler [client log cluster message node]
   (let [{:keys [term vote-granted id]} message
