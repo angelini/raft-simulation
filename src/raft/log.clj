@@ -27,7 +27,9 @@
 
 (defn compare-prev? [log prev-log-index prev-log-term]
   (let [{:keys [entries]} @(:state log)]
-    (= (nth entries prev-log-index) prev-log-term)))
+    (if (= prev-log-index 0)
+      true
+      (= (nth entries (- prev-log-index 1)) prev-log-term))))
 
 (defn append-entries [log entries leader-commit]
   (swap! (:state log)

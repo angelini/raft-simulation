@@ -8,7 +8,7 @@
 (defn message-type [uri]
   (case uri
     "/request-vote" :request-vote
-    "/append-entry" :append-entry))
+    "/append-entries" :append-entries))
 
 (defn format-request [request]
   (let [{:keys [body uri]} request]
@@ -17,7 +17,6 @@
 (defn create-handler [req-chan resp-chan]
   (fn [request]
     (do
-      (prn request)
       (async/>!! req-chan (format-request request))
       (async/<!! resp-chan))))
 

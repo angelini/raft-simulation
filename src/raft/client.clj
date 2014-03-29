@@ -8,7 +8,8 @@
   (str host ":" (+ port-base id) "/" action))
 
 (defn format-response [response]
-  (:body response))
+  (let [body (json/parse-string (:body response) true)]
+    (assoc body :type (keyword (:type body)))))
 
 (defrecord Client [host port-base resp-chan]
   component/Lifecycle

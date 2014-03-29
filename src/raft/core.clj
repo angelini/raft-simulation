@@ -15,7 +15,8 @@
 (defn file [id] (str "node_" id ".log"))
 
 (defn majority? [cluster votes]
-  (>= (math/ceil (/ (count cluster) 2)) (count votes)))
+  (let [cluster-size (+ (count cluster) 1)]
+    (>= (count votes) (math/ceil (/ cluster-size 2)))))
 
 (defn raft-system [id cluster]
   (component/system-map
@@ -77,9 +78,9 @@
       (do (respond server (assoc response :vote-granted false))
           node)
       (do (respond server (assoc response :vote-granted true))
-          (assoc node :voted-for message)))))
+          (assoc node :voted-for candidate-id)))))
 
-(defn append-entry-handler [server log message node]
+(defn append-entries-handler [server log message node]
   (let [{:keys [term leader entries leader-commit
                 prev-log-index prev-log-term]} message
         {:keys [current-term id]} node
@@ -98,10 +99,10 @@
     (cond
       (> term current-term) (candidate->follower (assoc node :current-term term))
       (not vote-granted) node
-      (vote-granted) (if (not (majority? cluster (conj (:votes node) id)))
-                       (assoc node :votes (conj (:votes node) id))
-                       (do (append-entries-rpc client log cluster node)
-                           (candidate->leader node))))))
+      vote-granted (if (not (majority? cluster (conj (:votes node) id)))
+                     (assoc node :votes (conj (:votes node) id))
+                     (do (append-entries-rpc client log cluster node)
+                         (candidate->leader node))))))
 
 (defn append-response-handler [message node]
   (let [{:keys [term success id]} message
@@ -109,7 +110,7 @@
     (cond
       (> term current-term) (leader->follower (assoc node :current-term term))
       (not success) node
-      (success) node)))
+      success node)))
 
 (defn heartbeat-handler [client log cluster node]
   (do (append-entries-rpc client log cluster node)
@@ -122,8 +123,8 @@
 
 (defn generate-timeout [node]
   (if (= (:state node) :leader)
-    (async/timeout 500)
-    (async/timeout (+ (rand-int 1000) 2000))))
+    (async/timeout 3000)
+    (async/timeout (+ (rand-int 5000) 5000))))
 
 (defn wait [system node]
   (let [{:keys [client server log cluster]} system
@@ -131,10 +132,14 @@
         res (response-rpc client)
         timeout (generate-timeout node)
         [message ch] (async/alts!! [req res timeout])]
+    (println "; Node")
+    (prn node)
+    (println "; Message")
     (prn message)
+    (println "")
     (case (:type message)
       :request-vote (request-vote-handler server message node)
-      :append-entry (append-entry-handler server log message node)
+      :append-entries (append-entries-handler server log message node)
       :vote-response (vote-response-handler client log cluster message node)
       :append-response (append-response-handler message node)
       nil (if (= (:state node) :leader)
