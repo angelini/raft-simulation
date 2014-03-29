@@ -35,5 +35,5 @@
   (swap! (:state log)
          (fn [current]
            (let [new-commit (min (count (:entries current)) leader-commit)]
-             (assoc current :entries (conj (:entries current) entries)
+             (assoc current :entries (concat (:entries current) entries)
                             :commit-index new-commit)))))
