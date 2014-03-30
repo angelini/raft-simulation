@@ -8,9 +8,11 @@
 
 (def raft-system-components [:client :server :log])
 
-(def port-base 8080)
+(def host "http://127.0.0.1")
 
-(defn port [id] (+ port-base id))
+(defn port [id] (+ 8080 id))
+
+(defn url [id] (str host ":" (port id)))
 
 (defn file [id] (str "node_" id ".log"))
 
@@ -22,7 +24,7 @@
   (component/system-map
     :id id
     :cluster cluster
-    :client (create-client "http://127.0.0.1" port-base)
+    :client (create-client)
     :server (create-server (port id))
     :log (create-log (file id))))
 
@@ -31,25 +33,29 @@
    :state :follower
    :current-term 1
    :voted-for nil
-   :leader nil
+   :leader-id nil
    :votes #{}})
+
+(defn cluster-node-info [id]
+  {:id id
+   :url (url id)})
 
 (defn request-vote-rpc [client log cluster node]
   (let [[last-index last-term] (last-entry log)]
-    (doseq [id cluster]
-      (rpc client id "request-vote" {:term (:current-term node)
-                                     :candidate-id (:id node)
-                                     :last-log-index last-index
-                                     :last-log-term last-term}))))
+    (doseq [cluster-node cluster]
+      (rpc client cluster-node "request-vote" {:term (:current-term node)
+                                               :candidate-id (:id node)
+                                               :last-log-index last-index
+                                               :last-log-term last-term}))))
 
 (defn append-entries-rpc [client log cluster node]
-  (doseq [id cluster]
-    (rpc client id "append-entries" {:term (:current-term node)
-                                     :leader-id (:id node)
-                                     :leader-commit 0
-                                     :prev-log-index 0
-                                     :prev-log-term nil
-                                     :entries []})))
+  (doseq [cluster-node cluster]
+    (rpc client cluster-node "append-entries" {:term (:current-term node)
+                                               :leader-id (:id node)
+                                               :leader-commit 0
+                                               :prev-log-index 0
+                                               :prev-log-term nil
+                                               :entries []})))
 
 (defn follower->candidate [node]
   (assoc node :state :candidate
@@ -66,7 +72,7 @@
   (assoc node :state :leader
               :voted-for nil
               :votes #{}
-              :leader (:id node)))
+              :leader-id (:id node)))
 
 (defn leader->follower [node]
   (assoc node :state :follower))
@@ -86,16 +92,19 @@
   (let [{:keys [term leader-id entries leader-commit
                 prev-log-index prev-log-term]} message
         {:keys [current-term id]} node
-        response {:term current-term :id id :type :append-response}]
-    (if (or (< term current-term)
-            (not (compare-prev? log prev-log-index prev-log-term)))
-      (do (respond server (assoc response :success false))
-          node)
-      (do (respond server (assoc response :success true))
-          (append-entries log entries leader-commit)
-          (assoc node :leader leader-id
-                      :current-term term
-                      :voted-for nil)))))
+        response {:term current-term :id id :type :append-response}
+        consistent? (compare-prev? log prev-log-index prev-log-term)]
+    (cond
+      (< term current-term) (do (respond server (assoc response :success false))
+                                node)
+      (not consistent?) (do (respond server (assoc response :success false))
+                            (remove-from! log prev-log-index)
+                            node)
+      :else (do (respond server (assoc response :success true))
+                (append-entries! log entries leader-commit)
+                (assoc node :leader-id leader-id
+                            :current-term term
+                            :voted-for nil)))))
 
 (defn vote-response-handler [client log cluster message node]
   (let [{:keys [term vote-granted id]} message
@@ -116,6 +125,15 @@
       (not success) node
       success node)))
 
+(defn client-set-handler [server log cluster message node]
+  (if (not= (:state node) :leader)
+    (if (nil? (:leader-id node))
+      (redirect-client server (url (:id (rand-nth cluster))))
+      (redirect-client server (url (:leader-id node))))
+    (do (append-string-entries! log (:current-term node) [message])
+        (respond server {:status :ok})
+        node)))
+
 (defn heartbeat-handler [client log cluster node]
   (do (append-entries-rpc client log cluster node)
       node))
@@ -135,7 +153,8 @@
         req (incoming-rpc server)
         res (response-rpc client)
         timeout (generate-timeout node)
-        [message ch] (async/alts!! [req res timeout])]
+        ; [message ch] (async/alts!! [req res timeout])]
+        [message ch] (async/alts!! [req res])]
     (println "; Node")
     (prn node)
     (println "; Message")
@@ -146,13 +165,15 @@
       :append-entries (append-entries-handler server log message node)
       :vote-response (vote-response-handler client log cluster message node)
       :append-response (append-response-handler message node)
+      :client-set (client-set-handler server log cluster message node)
       nil (if (= (:state node) :leader)
             (heartbeat-handler client log cluster node)
             (timeout-handler client log cluster node)))))
 
 (defn -main [& args]
   (let [nodes (map #(Integer/parseInt %) args)
-        [id & cluster] nodes
+        id (first nodes)
+        cluster (map cluster-node-info (rest nodes))
         system (component/start (raft-system id cluster))]
     (loop [node (init-node id)]
       (recur (wait system node)))))

@@ -8,7 +8,8 @@
 (defn message-type [uri]
   (case uri
     "/request-vote" :request-vote
-    "/append-entries" :append-entries))
+    "/append-entries" :append-entries
+    "/client-set" :client-set))
 
 (defn format-request [request]
   (let [{:keys [body uri]} request]
@@ -59,3 +60,6 @@
 
 (defn respond [server body]
   (async/>!! (:resp-chan server) (response body)))
+
+(defn redirect-client [server leader-url]
+  (async/>!! (:resp-chan server) (redirect leader-url)))

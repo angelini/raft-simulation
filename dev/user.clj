@@ -12,7 +12,7 @@
 
 (defn init []
   (alter-var-root #'system
-                  (constantly (raft-system 1 [2 3]))))
+                  (constantly (raft-system 1 (map cluster-node-info [2 3])))))
 
 (defn start []
   (alter-var-root #'system component/start))
