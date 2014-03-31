@@ -48,6 +48,10 @@
   (let [{:keys [entries commit-index]} @(:state log)]
     [commit-index (val-at entries commit-index)]))
 
+(defn uncommitted-entires [log]
+  (let [{:keys [entries commit-index]} @(:state log)]
+    (subvec entries commit-index)))
+
 (defn compare-prev? [log prev-index prev-term]
   (let [{:keys [entries]} @(:state log)]
     (if (= prev-index 0)
@@ -68,9 +72,16 @@
         amount (- commit-index (:commit-index prev))]
     (->> entries
          (take-last amount)
-         (write (:writer log)))))
+         (write (:writer log))
+         count)))
 
 (defn remove-from! [log index]
   (swap! (:state log)
          (fn [current]
            (assoc current :entries (drop-last index (:entries current))))))
+
+(defn watch-commit-index [log index cb]
+  (add-watch (:state log)
+             :commit-index
+             (fn [_ _ _ new-state]
+               (if (= new-state index) (cb)))))

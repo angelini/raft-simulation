@@ -35,6 +35,6 @@
   (async/go
     (let [params {:body (json/generate-string body)
                   :content-type :json}
-          resp (try (http/post (:url node) params) (catch Exception e nil))]
+          resp (try (http/post (str (:url node) "/" action) params) (catch Exception e nil))]
       (if resp
         (async/>! (:resp-chan client) (format-response resp))))))
