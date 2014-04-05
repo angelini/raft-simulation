@@ -54,15 +54,17 @@
                                                :last-log-term last-term}))))
 
 (defn append-entries-rpc [client log cluster node]
-  (lets [[last-index last-term] (last-entry log)
-         new-entires (uncommitted-entries log)])
-  (doseq [cluster-node cluster]
-    (rpc client cluster-node "append-entries" {:term (:current-term node)
-                                               :leader-id (:id node)
-                                               :leader-commit last-index
-                                               :prev-log-index 0
-                                               :prev-log-term nil
-                                               :entries new-entries})))
+  (let [[last-index _] (last-entry log)]
+    (doseq [cluster-node cluster]
+      (let [next-index (get-in node [:leader-state :next-index (:id cluster-node)])
+            prev-index (max (- next-index 1) 0)
+            entries (entries-from log prev-index)]
+        (rpc client cluster-node "append-entries" {:term (:current-term node)
+                                                   :leader-id (:id node)
+                                                   :leader-commit last-index
+                                                   :prev-log-index prev-index
+                                                   :prev-log-term (nth entries 0 nil)
+                                                   :entries (subvec entries (min 1 (count entries)))})))))
 
 (defn follower->candidate [node]
   (assoc node :state :candidate
@@ -86,12 +88,15 @@
               :leader-id nil
               :leader-state nil))
 
-(defn request-vote-handler [message node]
-  (let [{:keys [term candidate-id]} message
+(defn request-vote-handler [log message node]
+  (let [{:keys [term candidate-id
+                last-log-index last-log-term]} message
         {:keys [current-term voted-for id]} node
-        response {:term current-term :id id :type :vote-response}]
+        response {:term current-term :id id :type :vote-response}
+        consistent? (compare-prev? log last-log-index last-log-term)]
     (if (or (< term current-term)
-            (not (nil? voted-for)))
+            (not (nil? voted-for))
+            (not consistent?))
       (do (respond message (assoc response :vote-granted false))
           node)
       (do (respond message (assoc response :vote-granted true))
@@ -103,19 +108,19 @@
         {:keys [current-term id]} node
         response {:term current-term :id id :type :append-response}
         consistent? (compare-prev? log prev-log-index prev-log-term)]
-    (println (str ";; term -> " term))
-    (println (str ";; current-term -> " current-term))
     (cond
       (< term current-term) (do (respond message (assoc response :success false))
                                 node)
       (not consistent?) (do (respond message (assoc response :success false))
                             (remove-from! log prev-log-index)
                             node)
-      :else (do (respond message (assoc response :success true))
-                (append-entries! log entries)
-                (assoc node :leader-id leader-id
-                            :current-term term
-                            :voted-for nil)))))
+      :else (do (append-entries! log entries)
+                (apply-entries! log leader-commit)
+                (respond message (assoc response :success true
+                                                 :commit leader-commit
+                                                 :log-index (+ prev-log-index (count entries))))
+                (assoc (candidate->follower node) :leader-id leader-id
+                                                  :current-term term)))))
 
 (defn vote-response-handler [client log cluster message node]
   (let [{:keys [term vote-granted id]} message
@@ -124,26 +129,30 @@
     (cond
       (> term current-term) (candidate->follower (assoc node :current-term term))
       (not vote-granted) node
+      (not= (:state node) :candidate) node
       vote-granted (if (not (majority? cluster (conj (:votes node) id)))
                      (assoc node :votes (conj (:votes node) id))
-                     (do (append-entries-rpc client log cluster node)
-                         (-> node
-                             (candidate->leader)
-                             (assoc :leader-state (leader-state cluster last-log-index))))))))
+                     (let [new-node (-> node
+                                        candidate->leader
+                                        (assoc :leader-state (leader-state cluster last-log-index)))]
+                       (append-entries-rpc client log cluster new-node)
+                       new-node)))))
 
 (defn append-response-handler [message node]
-  (let [{:keys [term success id]} message
+  (let [{:keys [term success id log-index commit]} message
         {:keys [current-term]} node]
     (cond
       (> term current-term) (leader->follower (assoc node :current-term term))
-      (not success) node
-      success node)))
+      (not success) (update-in node [:leader-state :next-index id] dec)
+      success (-> node
+                  (assoc-in [:leader-state :next-index id] log-index)
+                  (assoc-in [:leader-state :match-index id] commit)))))
 
 (defn client-set-handler [log cluster message node]
   (if (not= (:state node) :leader)
     (if (nil? (:leader-id node))
-      (redirect-client message (url (:id (rand-nth cluster))))
-      (redirect-client message (url (:leader-id node))))
+      (do (redirect-client message (url (:id (rand-nth cluster)))) node)
+      (do (redirect-client message (url (:leader-id node))) node))
     (let [command (:command message)
           current-term (:current-term node)
           index (append-string-entries! log current-term [command])]
@@ -176,7 +185,7 @@
     (prn message)
     (println "")
     (case (:type message)
-      :request-vote (request-vote-handler message node)
+      :request-vote (request-vote-handler log message node)
       :append-entries (append-entries-handler log message node)
       :vote-response (vote-response-handler client log cluster message node)
       :append-response (append-response-handler message node)

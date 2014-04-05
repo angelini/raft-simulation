@@ -48,9 +48,9 @@
   (let [{:keys [entries commit-index]} @(:state log)]
     [commit-index (val-at entries commit-index)]))
 
-(defn uncommitted-entires [log]
-  (let [{:keys [entries commit-index]} @(:state log)]
-    (subvec entries commit-index)))
+(defn entries-from [log index]
+  (let [{:keys [entries]} @(:state log)]
+    (subvec entries (min index (count entries)))))
 
 (defn compare-prev? [log prev-index prev-term]
   (let [{:keys [entries]} @(:state log)]
@@ -61,7 +61,7 @@
 (defn append-entries! [log entries]
   (swap! (:state log)
          (fn [current]
-           (assoc current :entries (concat (:entries current) entries)))))
+           (assoc current :entries (vec (concat (:entries current) entries))))))
 
 (defn append-string-entries! [log term entries]
   (append-entries! log (map (fn [val] {:term term :val val}) entries)))
